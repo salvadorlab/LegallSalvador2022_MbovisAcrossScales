@@ -1,0 +1,1202 @@
+---
+title: "SNP_Denisity_Analysis"
+author: "Noah Legall"
+date: "3/22/2022"
+output: html_document
+---
+```{r}
+library(dplyr)
+library(fastbaps)
+library(randomForest)
+library(gggenes)
+library(fitdistrplus)
+library(ggplot2)
+library(caret)
+library(tidyr)
+library(phangorn)
+library(phytools)
+library(ggtree)
+library(ggnewscale)
+library(reshape)
+```
+
+## Original Phylo vs. Discordant Free Phylo
+
+```{r}
+orig_tree <- read.tree("/Users/noahaus/mbov_align.treefile")
+recomfree_tree <- read.tree("/Users/noahaus/mbov_no_recomb.contree")
+RF.dist(orig_tree,recomfree_tree)
+
+mbov <- ggtree(orig_tree)
+mbov$data$support = -1
+
+for (i in 1:length(mbov$data$isTip)){
+  if(mbov$data$isTip[i] == FALSE){
+    mbov$data$support[i] = as.numeric(mbov$data$label[i])
+  }
+  if(is.na(mbov$data$support[i])){
+    mbov$data$support[i] = 0
+  }
+  else{
+    next
+  }
+}
+
+mbov$data$higher75 <- FALSE
+
+mbov$data[mbov$data$support >= 75,]$higher75 <- TRUE
+higher75 <- subset(mbov$data, isTip == FALSE)
+sum(higher75$higher75)/length(higher75$higher75)
+
+mbov <- ggtree(recomfree_tree)
+mbov$data$support = -1
+
+for (i in 1:length(mbov$data$isTip)){
+  if(mbov$data$isTip[i] == FALSE){
+    mbov$data$support[i] = as.numeric(mbov$data$label[i])
+  }
+  if(is.na(mbov$data$support[i])){
+    mbov$data$support[i] = 0
+  }
+  else{
+    next
+  }
+}
+
+mbov$data$higher75 <- FALSE
+
+mbov$data[mbov$data$support >= 75,]$higher75 <- TRUE
+higher75 <- subset(mbov$data, isTip == FALSE)
+sum(higher75$higher75)/length(higher75$higher75)
+
+mbov <- ggtree(orig_tree)
+mbov$data$support = -1
+
+for (i in 1:length(mbov$data$isTip)){
+  if(mbov$data$isTip[i] == FALSE){
+    mbov$data$support[i] = as.numeric(mbov$data$label[i])
+  }
+  if(is.na(mbov$data$support[i])){
+    mbov$data$support[i] = 0
+  }
+  else{
+    next
+  }
+}
+
+mbov$data$higher50 <- FALSE
+
+mbov$data[mbov$data$support >= 50,]$higher50 <- TRUE
+higher50 <- subset(mbov$data, isTip == FALSE)
+sum(higher50$higher50)/length(higher50$higher50)
+
+mbov <- ggtree(recomfree_tree)
+mbov$data$support = -1
+
+for (i in 1:length(mbov$data$isTip)){
+  if(mbov$data$isTip[i] == FALSE){
+    mbov$data$support[i] = as.numeric(mbov$data$label[i])
+  }
+  if(is.na(mbov$data$support[i])){
+    mbov$data$support[i] = 0
+  }
+  else{
+    next
+  }
+}
+
+mbov$data$higher50 <- FALSE
+
+mbov$data[mbov$data$support >= 50,]$higher50 <- TRUE
+higher50 <- subset(mbov$data, isTip == FALSE)
+sum(higher50$higher50)/length(higher50$higher50)
+```
+## Rooting Strategy (run ONLY if the mad_tree variable is missing, time intensive)
+
+```{r}
+mbov_tree <- read.newick("/Users/noahaus/mbov_no_recomb.contree")
+mad_tree <- mad(mbov_tree)
+mad_tree <- read.tree(text=mad_tree)
+mbov_mad <- ggtree(mad_tree)
+```
+
+```{r}
+mbov_mid <- midpoint(mbov_tree)
+mbov_root <- root(mbov_tree,"LT708304.1")
+RF.dist(mbov_mid,mbov_root,rooted = TRUE)
+RF.dist(mbov_mid,mad_tree,rooted = TRUE)
+RF.dist(mad_tree,mbov_root, rooted = TRUE)
+```
+
+## Phylogeny
+```{r}
+
+#Metadata file presented to isolate_dat
+isolate_dat = read.csv("~/snp_dense_data/filtered_isolate_list.csv",header = TRUE)
+isolate_dat <- isolate_dat %>% left_join(plot.df,by=c("Sample"="id"))
+
+# Tree developed from SNP alignment of M. bovis alignment 
+mbov_tree <- read.tree("/Users/noahaus/mbov_no_recomb.contree")
+
+
+#change labels 
+old_bov <- c("BOVINE-Michigan","BOVINE-UK","BOVINE-NZ")
+for(i in 1:length(old_bov)){
+  isolate_dat$Species <- gsub(old_bov[i],"BOVINE",isolate_dat$Species)
+}
+
+old_cerv <- c("WTD-Michigan","ELK-Michigan","CERVINE-NZ")
+for(i in 1:length(old_cerv)){
+  isolate_dat$Species <- gsub(old_cerv[i],"CERVINE",isolate_dat$Species)
+}
+
+isolate_dat$Species <- gsub("-UK","",isolate_dat$Species)
+isolate_dat$Species <- gsub("-NZ","",isolate_dat$Species)
+isolate_dat$Species <- gsub("-US","",isolate_dat$Species)
+
+
+mbov_tree <- root(mbov_tree,"LT708304.1")
+mbov_tree <- drop.tip(mbov_tree,"LT708304.1")
+mbov <- ggtree(mbov_tree) 
+
+#Generate the data that will become rings that will surround the phylogeny
+baps_heat <- as.data.frame(as.factor(isolate_dat$fastbaps))
+rownames(baps_heat) <- isolate_dat$Sample
+
+species_heat <- as.data.frame(as.factor(isolate_dat$Species))
+rownames(species_heat) <- isolate_dat$Sample
+
+country_heat <- as.data.frame(as.factor(isolate_dat$Country))
+rownames(country_heat) <- isolate_dat$Sample
+
+
+#color palettes
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+cb_col <- colorRampPalette(cbPalette)
+species_col <- hcl.colors(7, "Zissou 1")
+country_col <- hcl.colors(3,"SunsetDark")
+
+
+
+#ggtree to label nodes based on bootstrap support
+mbov <- ggtree(mbov_tree)
+mbov$data$support = -1
+
+for (i in 1:length(mbov$data$isTip)){
+  if(mbov$data$isTip[i] == FALSE){
+    mbov$data$support[i] = as.numeric(mbov$data$label[i])
+  }
+  if(is.na(mbov$data$support[i])){
+    print("true")
+    mbov$data$support[i] = 0
+  }
+  else{
+    next
+  }
+}
+
+mbov$data$higher75 <- FALSE
+
+mbov$data[mbov$data$support >= 75,]$higher75 <- TRUE
+mbov_node_support <- mbov %<+% isolate_dat +
+  geom_treescale(linesize = 0.75, fontsize = 6, offset = 5) +
+  geom_point2(aes(subset=(!isTip & higher75 == TRUE),color=higher75),size = 1.5) + 
+  #geom_point2(aes(color=col), show.legend = TRUE) + 
+  scale_color_manual(values = c("black"), name = "Bootstrap Support", labels = c("75 or greater"))
+  
+t1 <- gheatmap(mbov_node_support,country_heat,offset = 0.003, width = 0.1, colnames = FALSE, legend_title = "Country") +  scale_fill_manual(values = country_col, name = "Country")
+t2 <- t1 + new_scale_fill()
+t2_1 <- gheatmap(t2,baps_heat,width = 0.1, colnames = FALSE,legend_title = "Population Cluster") + scale_fill_manual(values = cb_col(8), name = "Population Cluster")
+#t2_1 <- gheatmap(t2,species_heat,offset = 0.003, width = 0.1, colnames = FALSE, legend_title = "Species") +  scale_fill_manual(values = species_col, name = "Species")
+t3 <- t2_1 + new_scale_fill()
+#mbov_final <- gheatmap(t3,country_heat,offset = 0.006, width = 0.1, colnames = FALSE, legend_title = "Country") + scale_fill_manual(values = country_col, name = "Country")
+mbov_final <- gheatmap(t3,species_heat,offset = 0.006, width = 0.1, colnames = FALSE, legend_title = "Species") + scale_fill_manual(values = species_col, name = "Species")
+
+mbov_final
+```
+## Phylogeny w/ SNP data included
+
+```{r}
+#Host Species
+metric_mbov <- ggtree(mbov_tree, layout = "circular", branch.length = "none")
+t1 <- gheatmap(metric_mbov,species_heat, width = 0.2, colnames = FALSE, legend_title = "TEST") +  scale_fill_manual(values = species_col, name = "Species") +
+  theme(legend.title = element_text(size=20), #change legend title font size
+        legend.text = element_text(size=15)) #change legend text font size)
+
+#SS53
+metric_mbov <- ggtree(mbov_tree, layout = "circular", branch.length = "none")
+imp_species_metrics <- mbovRFdata %>% select(isolate_id, SSsnp53)
+row.names(imp_species_metrics) <- imp_species_metrics$isolate_id
+imp_species_metrics <- imp_species_metrics %>% select(-isolate_id)
+
+t2 <- gheatmap(metric_mbov,imp_species_metrics, width = 0.2, colnames = FALSE, legend_title = "TEST") +  scale_fill_viridis_c(option="H",name="SSR53\nNumber of SNPs") +
+  theme(legend.title = element_text(size=20), #change legend title font size
+        legend.text = element_text(size=15)) #change legend text font size)
+
+
+#SS85
+imp_species_metrics <- mbovRFdata %>% select(isolate_id, SSsnp85)
+row.names(imp_species_metrics) <- imp_species_metrics$isolate_id
+imp_species_metrics <- imp_species_metrics %>% select(-isolate_id)
+
+t3 <- gheatmap(metric_mbov,imp_species_metrics, width = 0.2, colnames = FALSE, legend_title = "TEST") +  scale_fill_viridis_c(option="H",name="SSR85\nNumber of SNPs") +
+  theme(legend.title = element_text(size=20), #change legend title font size
+        legend.text = element_text(size=15)) #change legend text font size)
+ 
+
+#SS11
+imp_species_metrics <- mbovRFdata %>% select(isolate_id, SSsnp11)
+row.names(imp_species_metrics) <- imp_species_metrics$isolate_id
+imp_species_metrics <- imp_species_metrics %>% select(-isolate_id)
+
+t4 <- gheatmap(metric_mbov,imp_species_metrics, width = 0.2, colnames = FALSE, legend_title = "TEST") +  scale_fill_viridis_c(option="H",name="SSR11\nNumber of SNPs") +
+  theme(legend.title = element_text(size=20), #change legend title font size
+        legend.text = element_text(size=15)) #change legend text font size)
+
+gridExtra::grid.arrange(t1,t2,t3,t4,nrow=2)
+```
+
+## Which window size/step size combo leads to most results?
+
+```{r}
+snp_null <- read.table("~/snp_dense_data/snp_null.9778699.out",sep = "\t",header = TRUE)
+snp_actual <- read.table("~/snp_dense_data/snp_actual.9778700.out",sep = "\t",header = TRUE)
+```
+
+```{r}
+# Let's see the histogram of each snp count per data 
+snp_null %>% ggplot(aes(x=number_of_snps)) +
+  geom_histogram(binwidth = 1) + 
+  facet_grid(window_size ~ step_size)
+
+snp_actual %>% ggplot(aes(x=number_of_snps)) +
+  geom_histogram(binwidth = 1) + 
+  facet_grid(window_size ~ step_size)
+
+snp_null %>%  ggplot(aes(x=number_of_snps)) +
+  geom_boxplot() + 
+  facet_grid(window_size ~ step_size)
+```
+
+```{r}
+subset_snp_count <- subset(snp_null,window_size==1000 & step_size == 50)
+
+lambdha <- fitdistr(subset_snp_count$number_of_snps,"poisson")
+
+annotate_val <- paste0("Poisson null distribution - lambdha: ",round(lambdha$estimate,3))
+
+snp_null %>%  filter(window_size == 1000 & step_size ==50) %>% ggplot(aes(x=number_of_snps)) +
+  geom_histogram(binwidth = 1) + 
+  theme(
+    axis.text = element_text(size = 13),
+    axis.title = element_text(size = 15),
+    axis.line = element_line(),
+    panel.background = element_blank(),
+    plot.title = element_text(size = 15)
+  ) +
+  labs(x = "Number of SNPs in window",
+       y = "Frequency") + 
+  ggtitle(annotate_val)
+
+```
+
+```{r}
+## Let's run through the steps of one hypothesis test
+
+# 1. fit the null model to a poisson distribution 
+subset_snp_count <- subset(snp_null,window_size==1000 & step_size == 50)
+subset_snp_count %>% ggplot(aes(x=number_of_snps)) +
+  geom_histogram(binwidth = 1)
+
+lambdha <- fitdistr(subset_snp_count$number_of_snps,"poisson")
+
+# 2. establish a significance threshold (bonferroni corrected)
+subset_snp_count <- subset(snp_actual,window_size==100 & step_size == 50)
+num_obs <- nrow(subset_snp_count)
+sig_level <- 0.05/num_obs
+
+subset_snp_count$pass <- ifelse(1-ppois(subset_snp_count$number_of_snps,lambdha$estimate) < sig_level,1,0)
+#head(subset_snp_count$pass)
+num_pass <- sum(subset_snp_count$pass)
+subset(subset_snp_count,pass == 1)
+```
+
+```{r}
+# We can extend this out by making a nested for loop
+w_size <- c()
+s_size <- c()
+n_pass <- c()
+
+for(i in 1:length(unique(snp_actual$window_size))){
+  for(j in 1:length(unique(snp_actual$step_size))){
+    # 1. fit the null model to a poisson distribution 
+  subset_snp_count <- subset(snp_null,window_size==unique(snp_actual$window_size)[i] & step_size == unique(snp_actual$step_size)[j])
+  
+  if(nrow(subset_snp_count) == 0){
+    print("skipping!")
+    next 
+  } else {
+    
+  lambdha <- fitdistr(subset_snp_count$number_of_snps,"poisson")
+
+# 2. establish a significance threshold (bonferroni corrected)
+subset_snp_count <- subset(snp_actual,window_size==unique(snp_actual$window_size)[i] & step_size == unique(snp_actual$step_size)[j])
+num_obs <- nrow(subset_snp_count)
+sig_level <- 0.05/num_obs
+
+subset_snp_count$pass <- ifelse(1-ppois(subset_snp_count$number_of_snps,lambdha$estimate) < sig_level,1,0)
+#head(subset_snp_count$pass)
+num_pass <- sum(subset_snp_count$pass)
+print(num_pass)
+w_size <- append(w_size,unique(snp_actual$window_size)[i])
+s_size <- append(s_size,unique(snp_actual$step_size)[j])
+n_pass <- append(n_pass,num_pass)
+
+} 
+  }
+}
+
+# let's make the dataframe 
+num_sig_data <- data.frame(w_size,s_size,n_pass)
+```
+
+```{r}
+num_sig_data %>% ggplot(aes(as.factor(w_size),as.factor(s_size), fill = n_pass)) +
+  geom_tile() + 
+  scale_fill_gradient(low = "white", high = "steelblue",name = "Number of \nsignificant windows") +
+   theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         axis.title.y = element_text(size = 15),
+         axis.title.x = element_text(size = 15),
+         axis.line = element_line(),
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13)) +
+  labs(x = "Window size (bp)",
+       y = "Step size (bp)")
+```
+
+```{r}
+### let's extract the regions as data
+subset_snp_count <- subset(snp_null,window_size==1000 & step_size == 50)
+    
+  lambdha <- fitdistr(subset_snp_count$number_of_snps,"poisson")
+
+# 2. establish a significance threshold (bonferroni corrected)
+subset_snp_count <- subset(snp_actual,window_size==1000 & step_size == 50)
+num_obs <- nrow(subset_snp_count)
+sig_level <- 0.05/num_obs
+
+subset_snp_count$pass <- ifelse(1-ppois(subset_snp_count$number_of_snps,lambdha$estimate) < sig_level,1,0)
+
+snp_dense_regions <- subset(subset_snp_count,pass == 1)
+snp_dense_regions$chr <- "LT708304.1"
+```
+
+```{r}
+sdr <-  dplyr::select(snp_dense_regions,chr,start_pos.,end_pos.)
+write.csv(sdr,"example_out.csv")
+```
+
+
+## Random Forest Analysis - Species, Country, Population Clusters 
+
+```{r}
+setwd("~/snp_dense_data/")
+SDsnp_count <- read.csv("sd_counts.csv")
+SDsnp_count <- SDsnp_count[,-which(names(SDsnp_count) %in% c("X"))]
+SDindel_count <- read.csv("sd_indel_counts.csv")
+SDindel_count <- SDindel_count[,-which(names(SDindel_count) %in% c("X"))]
+codingVnoncoding_snp <- read.csv("coding_vs_noncoding.csv",header = FALSE)
+colnames(codingVnoncoding_snp) <- c("isolate_id","snp_coding","snp_noncoding")
+codingVnoncoding_indel <- read.csv("coding_vs_noncoding_indel.csv",header = FALSE)
+colnames(codingVnoncoding_indel) <- c("isolate_id","indel_coding","indel_noncoding")
+gc_content <- read.csv("gc_content.csv",header = FALSE)
+colnames(gc_content) <- c("isolate_id","GC")
+SSsnp_count <- read.csv("ssr_rfa.data")
+SSsnp_count <- SSsnp_count[,-which(names(SSsnp_count) %in% c("X"))]
+
+
+mbovRFdata <- SDsnp_count %>% left_join(SDindel_count, by = "isolate_id") %>% left_join(codingVnoncoding_snp, by = "isolate_id") %>% left_join(codingVnoncoding_indel, by = "isolate_id") %>% left_join(gc_content, by = "isolate_id") %>% left_join(SSsnp_count, by = "isolate_id")
+```
+
+```{r}
+sparse.data <- import_fasta_sparse_nt("/Users/noahaus/mbov_align.recomb_free.fasta")
+sparse.data <- optimise_prior(sparse.data, type = "optimise.symmetric")
+baps.hc <- fast_baps(sparse.data)
+best.partition <- best_baps_partition(sparse.data, baps.hc)
+plot.df <- data.frame(id = colnames(sparse.data$snp.matrix), fastbaps = best.partition, 
+    stringsAsFactors = FALSE)
+```
+
+```{r}
+isolate_dat = read.csv("~/snp_dense_data/filtered_isolate_list.csv",header = TRUE,stringsAsFactors = FALSE)
+isolate_dat <- isolate_dat %>% left_join(plot.df,by=c("Sample"="id"))
+mbov_meta <- isolate_dat %>% dplyr::select(Sample,Species,Country,fastbaps)
+mbovRFdata <- mbovRFdata %>% left_join(mbov_meta,by = c("isolate_id"="Sample"))
+```
+
+```{r}
+set.seed(1)
+mbovRFdata <- SDsnp_count %>% left_join(SDindel_count, by = "isolate_id") %>% left_join(codingVnoncoding_snp, by = "isolate_id") %>% left_join(codingVnoncoding_indel, by = "isolate_id") %>% left_join(gc_content, by = "isolate_id") %>% left_join(SSsnp_count, by = "isolate_id") %>% left_join(mbov_meta,by = c("isolate_id"="Sample"))
+
+RF_data_only <- mbovRFdata %>% dplyr::select(-c(Country,fastbaps,isolate_id,Species))
+corr_matrix <- cor(RF_data_only)
+corr_matrix[is.na(corr_matrix)] = 0.0
+high_cor_columns <- sort(findCorrelation(corr_matrix, cutoff=0.5)) + 1
+mbovRFdata <- mbovRFdata[-high_cor_columns]
+
+highly_correlated<-data.frame("removed" = colnames(mbovRFdata)[high_cor_columns])
+
+mbovRFdata$Species <- factor(mbovRFdata$Species)
+species_rf <- randomForest(Species ~ .,data = mbovRFdata %>% dplyr::select(-c(Country,fastbaps,isolate_id)),importance=TRUE, ntree=1000)
+mbovRFdata$Country <- factor(mbovRFdata$Country)
+country_rf <- randomForest(Country ~ .,data = mbovRFdata %>% dplyr::select(-c(Species,fastbaps,isolate_id)),importance=TRUE, ntree=1000)
+mbovRFdata$fastbaps <- factor(mbovRFdata$fastbaps)
+fastbaps_rf <- randomForest(fastbaps ~ .,data = mbovRFdata %>% dplyr::select(-c(Species,Country,isolate_id)),importance=TRUE, ntree=1000)
+```
+
+```{r}
+# Quick Model Selection 
+RF_data_only <- mbovRFdata %>% dplyr::select(-c(Country,fastbaps,isolate_id,Species))
+corr_matrix <- cor(RF_data_only)
+corr_matrix[is.na(corr_matrix)] = 0.0
+high_cor_columns <- sort(findCorrelation(corr_matrix, cutoff=0.5)) + 1
+mbovRFdata <- mbovRFdata[-high_cor_columns]
+
+species_rf <- randomForest(Species ~ .,data = mbovRFdata %>% dplyr::select(-c(Country,fastbaps,isolate_id)),importance=TRUE, ntree=1000)
+mbovRFdata$Country <- factor(mbovRFdata$Country)
+country_rf <- randomForest(Country ~ .,data = mbovRFdata %>% dplyr::select(-c(Species,fastbaps,isolate_id)),importance=TRUE, ntree=1000)
+mbovRFdata$fastbaps <- factor(mbovRFdata$fastbaps)
+fastbaps_rf <- randomForest(fastbaps ~ .,data = mbovRFdata %>% dplyr::select(-c(Species,Country,isolate_id)),importance=TRUE, ntree=1000)
+```
+## RFA - Across Scales Bar Graphs
+```{r}
+country_imp <- as.data.frame(varImpPlot(country_rf))
+country_imp$class <- "country"
+country_imp$region <- row.names(country_imp)
+country_imp <- country_imp[order(-country_imp$MeanDecreaseAccuracy),] 
+country_imp <- country_imp[1:20,]
+species_imp <- as.data.frame(varImpPlot(species_rf))
+species_imp$class <- "species"
+species_imp$region <- row.names(species_imp)
+species_imp <- species_imp[order(-species_imp$MeanDecreaseAccuracy),] 
+species_imp <- species_imp[1:20,]
+fastbaps_imp <- as.data.frame(varImpPlot(fastbaps_rf))
+fastbaps_imp$class <- "fastbaps"
+fastbaps_imp$region <- row.names(fastbaps_imp)
+fastbaps_imp <- fastbaps_imp[order(-fastbaps_imp$MeanDecreaseAccuracy),] 
+fastbaps_imp <- fastbaps_imp[1:20,]
+var_imp <- rbind(country_imp,fastbaps_imp,species_imp)
+
+var_imp %>% filter(class == "species") %>% ggplot(aes(x=reorder(region,-MeanDecreaseAccuracy),y=MeanDecreaseAccuracy)) + 
+  geom_col() + 
+  geom_bar(stat="identity",fill="black") + 
+   scale_fill_manual(values = c("black"), name = "") +
+   theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+         axis.line = element_line(),
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Mean Decrease in Accuracy",
+       x = "Predictors") +
+  ggtitle("Host Species")
+
+var_imp %>% filter(class == "country") %>% ggplot(aes(x=reorder(region,-MeanDecreaseAccuracy),y=MeanDecreaseAccuracy)) + 
+  geom_col() + 
+  geom_bar(stat="identity",fill="black") + 
+   scale_fill_manual(values = c("black"), name = "") +
+   theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+         axis.line = element_line(),
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Mean Decrease in Accuracy",
+       x = "Predictors") +
+  ggtitle("Country of Origin")
+
+var_imp %>% filter(class == "fastbaps") %>% ggplot(aes(x=reorder(region,-MeanDecreaseAccuracy),y=MeanDecreaseAccuracy)) + 
+  geom_col() + 
+  geom_bar(stat="identity",fill="black") + 
+   scale_fill_manual(values = c("black"), name = "") +
+   theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+         axis.line = element_line(),
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Mean Decrease in Accuracy",
+       x = "Predictors") +
+  ggtitle("Population Cluster")
+
+```
+
+### RFA - Feature Importance increase/decrease as scale narrows
+```{r}
+fastbaps_imp <- as.data.frame(varImpPlot(fastbaps_rf)) %>% dplyr::select(MeanDecreaseAccuracy)
+fastbaps_imp$feature <- row.names(fastbaps_imp)
+fastbaps_imp$class <- "fastbaps"
+country_imp <- as.data.frame(varImpPlot(country_rf)) %>% dplyr::select(MeanDecreaseAccuracy)
+country_imp$feature <- row.names(country_imp)
+country_imp$class <- "country"
+species_imp <- as.data.frame(varImpPlot(species_rf)) %>% dplyr::select(MeanDecreaseAccuracy)
+species_imp$feature <- row.names(species_imp)
+species_imp$class <- "species"
+var_imp <- rbind(country_imp,fastbaps_imp,species_imp)
+
+# only keep features that ONLY increase
+pdf("allplots.pdf",onefile = TRUE)
+for(i in 1:length(unique(var_imp$feature))){
+  tplot <- var_imp %>% filter(feature == unique(var_imp$feature)[i]) %>% ggplot(aes(x=class,y=MeanDecreaseAccuracy,group=1)) +
+  geom_line() +
+  ggtitle(unique(var_imp$feature)[i])
+  print(tplot) 
+}
+dev.off()
+```
+
+```{r}
+fastbaps_imp <- as.data.frame(varImpPlot(fastbaps_rf)) %>% dplyr::select(MeanDecreaseAccuracy)
+fastbaps_imp$feature <- row.names(fastbaps_imp)
+fastbaps_imp$class <- "Subpopulation"
+country_imp <- as.data.frame(varImpPlot(country_rf)) %>% dplyr::select(MeanDecreaseAccuracy)
+country_imp$feature <- row.names(country_imp)
+country_imp$class <- "Country"
+species_imp <- as.data.frame(varImpPlot(species_rf)) %>% dplyr::select(MeanDecreaseAccuracy)
+species_imp$feature <- row.names(species_imp)
+species_imp$class <- "Host Species"
+var_imp <- rbind(country_imp,fastbaps_imp,species_imp)
+var_imp$class <- factor(var_imp$class, levels = c("Country","Subpopulation","Host Species"))
+
+var_imp %>% filter(feature %in% c("SDsnp10","SSsnp6","SSsnp85","SSsnp42","SSsnp53","SSsnp71","SSsnp28")) %>% ggplot(aes(x=class,y=MeanDecreaseAccuracy,color=feature,group=feature)) + 
+  geom_line(size = 2) + 
+  theme(
+    axis.text = element_text(size = 13),
+    axis.title = element_text(size = 15),
+    axis.line = element_line(),
+    panel.background = element_blank(),
+    plot.title = element_text(size = 15)
+  ) +
+  labs(x = "Scales",
+       y = "Mean Decrease in Accuracy",
+       color = "Predictor") 
+```
+## RFA - Across Scales Venn Diagram
+```{r}
+country_regions <- var_imp[var_imp$class == "country",]$region
+fastbaps_regions <- var_imp[var_imp$class == "fastbaps",]$region
+species_regions <- var_imp[var_imp$class == "species",]$region
+
+setdiff(intersect(country_regions,fastbaps_regions),species_regions)
+print("\n")
+setdiff(intersect(country_regions,species_regions),fastbaps_regions)
+print("\n")
+setdiff(intersect(fastbaps_regions,species_regions),country_regions)
+print("\n")
+core <- intersect(intersect(fastbaps_regions,species_regions),country_regions)
+unique(country_regions,core)
+
+x <- list(Country = country_regions,
+          Subpopulation = fastbaps_regions,
+          "Species" = species_regions)
+
+display_venn <- function(x){
+  library(VennDiagram)
+  grid.newpage()
+  venn_object <- venn.diagram(x, filename = NULL, fill = c("#999999", "#E69F00", "#56B4E9"), cat.cex = 1.5, cex = 3)
+  grid.draw(venn_object)
+}
+
+display_venn(x)
+```
+
+### RFA - Cattle vs. Wildlife
+```{r}
+set.seed(1)
+mbovRFdata <- SDsnp_count %>% left_join(SDindel_count, by = "isolate_id") %>% left_join(codingVnoncoding_snp, by = "isolate_id") %>% left_join(codingVnoncoding_indel, by = "isolate_id") %>% left_join(gc_content, by = "isolate_id") %>% left_join(SSsnp_count, by = "isolate_id") %>% left_join(mbov_meta,by = c("isolate_id"="Sample"))
+mbovRFdata <- mbovRFdata[-high_cor_columns]
+
+mbovRFdata$isCattle <- ifelse(grepl("BOVINE",mbovRFdata$Species),"CATTLE","WILDLIFE")
+mbovRFdata$isCattle_geo = mbovRFdata$Species
+mbovRFdata[!grepl("BOVINE",mbovRFdata$Species),]$isCattle_geo <- "WILDLIFE"
+
+cattle_rf <- randomForest(as.factor(isCattle) ~ .,data = mbovRFdata %>% dplyr::select(-c(Species,Country,fastbaps,isolate_id,isCattle_geo)),importance=TRUE, ntree=1000)
+mbovRFdata$isCattle_geo = mbovRFdata$Species
+mbovRFdata[!grepl("BOVINE",mbovRFdata$Species),]$isCattle_geo <- "WILDLIFE"
+cattle_geo_rf <- randomForest(as.factor(isCattle_geo) ~ .,data = mbovRFdata %>% dplyr::select(-c(Species,Country,fastbaps,isolate_id,isCattle)),importance=TRUE, ntree=1000)
+
+cattle_imp <- as.data.frame(varImpPlot(cattle_rf)) %>% dplyr::select(MeanDecreaseAccuracy)
+cattle_imp$feature <- row.names(cattle_imp)
+cattle_imp$class <- "cattle"
+cattle_imp <- cattle_imp[order(-cattle_imp$MeanDecreaseAccuracy),] 
+cattle_imp <- cattle_imp[1:20,]
+
+cattlegeo_imp <- as.data.frame(varImpPlot(cattle_geo_rf)) %>% dplyr::select(MeanDecreaseAccuracy)
+cattlegeo_imp$feature <- row.names(cattlegeo_imp)
+cattlegeo_imp$class <- "cattle_geo"
+cattlegeo_imp <- cattlegeo_imp[order(-cattlegeo_imp$MeanDecreaseAccuracy),] 
+cattlegeo_imp <- cattlegeo_imp[1:20,]
+
+cattle_var_imp <- rbind(cattle_imp,cattlegeo_imp)
+```
+
+## RFA - Cattle Bar Graphs
+```{r}
+cattle_imp <- as.data.frame(varImpPlot(cattle_rf)) %>% dplyr::select(MeanDecreaseAccuracy)
+cattle_imp$feature <- row.names(cattle_imp)
+cattle_imp$class <- "cattle"
+cattle_imp <- cattle_imp[order(-cattle_imp$MeanDecreaseAccuracy),] 
+cattle_imp <- cattle_imp[1:20,]
+
+cattlegeo_imp <- as.data.frame(varImpPlot(cattle_geo_rf)) %>% dplyr::select(MeanDecreaseAccuracy)
+cattlegeo_imp$feature <- row.names(cattlegeo_imp)
+cattlegeo_imp$class <- "cattle_geo"
+cattlegeo_imp <- cattlegeo_imp[order(-cattlegeo_imp$MeanDecreaseAccuracy),] 
+cattlegeo_imp <- cattlegeo_imp[1:20,]
+
+cattle_var_imp <- rbind(cattle_imp,cattlegeo_imp)
+
+
+cattle_var_imp %>% filter(class == "cattle") %>% ggplot(aes(x=reorder(feature,-MeanDecreaseAccuracy),y=MeanDecreaseAccuracy)) + 
+  geom_col() + 
+  geom_bar(stat="identity",fill="black") + 
+   scale_fill_manual(values = c("black"), name = "") +
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+         axis.line = element_line(),
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Mean Decrease in Accuracy",
+       x = "Predictors") +
+  ggtitle("Aggregated Cattle")
+
+cattle_var_imp %>% filter(class == "cattle_geo") %>% ggplot(aes(x=reorder(feature,-MeanDecreaseAccuracy),y=MeanDecreaseAccuracy)) + 
+  geom_col() + 
+  geom_bar(stat="identity",fill="black") + 
+   scale_fill_manual(values = c("black"), name = "") +
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+         axis.line = element_line(),
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Mean Decrease in Accuracy",
+       x = "Predictors") +
+  ggtitle("Stratified Cattle")
+```
+
+## RFA - Cattle Region Importance Changes
+```{r}
+cattle_var_imp_wide <- reshape(cattle_var_imp, idvar = "feature", timevar = "class", direction = "wide")
+cattle_var_imp_wide$difference <- abs(cattle_var_imp_wide$MeanDecreaseAccuracy.cattle_geo - cattle_var_imp_wide$MeanDecreaseAccuracy.cattle)
+cattle_var_imp_wide <- cattle_var_imp_wide[order(-cattle_var_imp_wide$difference),]
+cattle_var_imp_wide <- subset(cattle_var_imp_wide, difference > 10)
+#cattle_var_imp_wide <- cattle_var_imp_wide[1:10,]
+cattle_var_imp_new <- melt(cattle_var_imp_wide, id.vars = c("feature","difference"))
+cattle_var_imp_new$variable <- ifelse(cattle_var_imp_new$variable == "MeanDecreaseAccuracy.cattle","Cattle (aggregated)","Cattle (stratified)")
+
+
+cattle_var_imp_new  %>% ggplot(aes(x=variable,y=value,color=feature,group=feature)) + geom_line(size = 2) + 
+  theme(
+    axis.text = element_text(size = 13),
+    axis.title = element_text(size = 15),
+    axis.line = element_line(),
+    panel.background = element_blank(),
+    plot.title = element_text(size = 15)
+  ) +
+  labs(x = "Cattle Separated",
+       y = "Mean Decrease in Accuracy",
+       color = "Predictor") 
+```
+
+## RFA - Cattle Venn Diagram
+```{r}
+cattle_regions <- cattle_var_imp[cattle_var_imp$class == "cattle",]$feature
+cattle_geo_regions <- cattle_var_imp[cattle_var_imp$class == "cattle_geo",]$feature
+x <- list(Aggregate = cattle_regions,
+          Stratified = cattle_geo_regions)
+
+display_venn <- function(x){
+  library(VennDiagram)
+  grid.newpage()
+  venn_object <- venn.diagram(x, filename = NULL, fill = c("#E69F00", "#56B4E9"), cat.cex = 1.5, cex = 3)
+  grid.draw(venn_object)
+}
+
+display_venn(x)
+```
+
+## RFA - Reservoir vs Non-target species
+
+```{r}
+set.seed(1)
+ukspecies_RF <- mbovRFdata %>% filter(Species %in% c("BOVINE-UK","BADGER-UK"))
+ukspecies_RF$Species <- factor(ukspecies_RF$Species)
+reservoir_rf <- randomForest(Species ~ .,data = ukspecies_RF %>% dplyr::select(-c(Country,fastbaps,isolate_id,isCattle,isCattle_geo)),importance=TRUE, ntree=1000)
+
+reservoir_imp <- as.data.frame(varImpPlot(reservoir_rf))
+reservoir_imp <- reservoir_imp[order(-reservoir_imp$MeanDecreaseAccuracy),]
+reservoir_imp <- reservoir_imp[1:20,]
+reservoir_imp$feature <- row.names(reservoir_imp)
+
+reservoir_imp %>% ggplot(aes(x=reorder(feature,-MeanDecreaseAccuracy),y=MeanDecreaseAccuracy)) + 
+  geom_col() + 
+  geom_bar(stat="identity",fill="black") + 
+   scale_fill_manual(values = c("black"), name = "") +
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+         axis.line = element_line(),
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Mean Decrease in Accuracy",
+       x = "Predictors") +
+  ggtitle("Wildlife reservoir vs. Non-Target Host")
+```
+
+## Selective Sweep Analysis 
+```{r}
+setwd("~/omegaplus_result/")
+null150 <- read.table("OmegaPlus_Report.150_null")
+null150$bp_pos <- floor(as.numeric(row.names(null150)))
+null150$win_size <- 150
+colnames(null150) = c("omega_value","bp_position","win_size")
+null300 <- read.table("OmegaPlus_Report.300_null")
+null300$bp_pos <- floor(as.numeric(row.names(null300)))
+null300$win_size <-300
+colnames(null300) = c("omega_value","bp_position","win_size")
+null500 <- read.table("OmegaPlus_Report.500_null")
+null500$bp_pos <- floor(as.numeric(row.names(null500)))
+null500$win_size <-500
+colnames(null500) = c("omega_value","bp_position","win_size")
+null750 <- read.table("OmegaPlus_Report.750_null")
+null750$bp_pos <- floor(as.numeric(row.names(null750)))
+null750$win_size <-750
+colnames(null750) = c("omega_value","bp_position","win_size")
+null1000 <- read.table("OmegaPlus_Report.1000_null")
+null1000$bp_pos <- floor(as.numeric(row.names(null1000)))
+null1000$win_size <-1000
+colnames(null1000) = c("omega_value","bp_position","win_size")
+#####op_null <- rbind(null150,null300,null500,null750,null1000)
+null1500 <- read.table("OmegaPlus_Report.1500_null")
+null1500$bp_pos <- floor(as.numeric(row.names(null1500)))
+null1500$win_size <- 1500
+colnames(null1500) = c("omega_value","bp_position","win_size")
+null3000 <- read.table("OmegaPlus_Report.3000_null")
+null3000$bp_pos <- floor(as.numeric(row.names(null3000)))
+null3000$win_size <-3000
+colnames(null3000) = c("omega_value","bp_position","win_size")
+null5000 <- read.table("OmegaPlus_Report.5000_null")
+null5000$bp_pos <- floor(as.numeric(row.names(null5000)))
+null5000$win_size <-5000
+colnames(null5000) = c("omega_value","bp_position","win_size")
+null7500 <- read.table("OmegaPlus_Report.7500_null")
+null7500$bp_pos <- floor(as.numeric(row.names(null7500)))
+null7500$win_size <-7500
+colnames(null7500) = c("omega_value","bp_position","win_size")
+null10000 <- read.table("OmegaPlus_Report.10000_null")
+null10000$bp_pos <- floor(as.numeric(row.names(null10000)))
+null10000$win_size <-10000
+colnames(null10000) = c("omega_value","bp_position","win_size")
+op_null <- rbind(null150,null300,null500,null750,null1000,null1500,null3000,null5000,null7500,null10000)
+```
+
+```{r}
+#initial analysis 
+op_null %>% filter(omega_value > 0.0 )%>% ggplot(aes(x=omega_value))+
+  geom_histogram(binwidth = 1) +
+  facet_wrap(~win_size,ncol = 2)
+
+op_null %>% filter(omega_value > 0.0 )%>% ggplot(aes(x=omega_value))+
+  geom_histogram(binwidth = 1) +
+  xlim(c(0,100)) +
+  facet_wrap(~win_size,ncol = 2)
+```
+
+```{r}
+subset_op <- subset(op_null,win_size==5000 & omega_value > 0.0)
+    
+  params <- fitdistr(subset_op$omega_value,"gamma")
+annotate_val <- paste0("Gamma null distribution - shape: ",round(params$estimate["shape"],3), ", rate: ", round(params$estimate["rate"],3))
+
+op_null %>% filter(w_size == 5000 & omega_value > 0.0) %>% ggplot(aes(x=omega_value))+
+  geom_histogram(binwidth = 0.5) + 
+  theme(
+    axis.text = element_text(size = 13),
+    axis.title = element_text(size = 15),
+    axis.line = element_line(),
+    panel.background = element_blank(),
+    plot.title = element_text(size = 15)
+  ) +
+  labs(x = "Omega Value",
+       y = "Frequency") + 
+  ggtitle(annotate_val)
+```
+
+```{r}
+setwd("~/omegaplus_result/")
+actual150 <- read.table("OmegaPlus_Report.150_actual")
+actual150$bp_pos <- floor(as.numeric(row.names(actual150)))
+actual150$win_size <- 150
+colnames(actual150) = c("omega_value","bp_position","win_size")
+actual300 <- read.table("OmegaPlus_Report.300_actual")
+actual300$bp_pos <- floor(as.numeric(row.names(actual300)))
+actual300$win_size <-300
+colnames(actual300) = c("omega_value","bp_position","win_size")
+actual500 <- read.table("OmegaPlus_Report.500_actual")
+actual500$bp_pos <- floor(as.numeric(row.names(actual500)))
+actual500$win_size <-500
+colnames(actual500) = c("omega_value","bp_position","win_size")
+actual750 <- read.table("OmegaPlus_Report.750_actual")
+actual750$bp_pos <- floor(as.numeric(row.names(actual750)))
+actual750$win_size <-750
+colnames(actual750) = c("omega_value","bp_position","win_size")
+actual1000 <- read.table("OmegaPlus_Report.1000_actual")
+actual1000$bp_pos <- floor(as.numeric(row.names(actual1000)))
+actual1000$win_size <-1000
+colnames(actual1000) = c("omega_value","bp_position","win_size")
+#####op_actual <- rbind(actual150,actual300,actual500,actual750,actual1000)
+actual1500 <- read.table("OmegaPlus_Report.1500_actual")
+actual1500$bp_pos <- floor(as.numeric(row.names(actual1500)))
+actual1500$win_size <- 1500
+colnames(actual1500) = c("omega_value","bp_position","win_size")
+actual3000 <- read.table("OmegaPlus_Report.3000_actual")
+actual3000$bp_pos <- floor(as.numeric(row.names(actual3000)))
+actual3000$win_size <-3000
+colnames(actual3000) = c("omega_value","bp_position","win_size")
+actual5000 <- read.table("OmegaPlus_Report.5000_actual")
+actual5000$bp_pos <- floor(as.numeric(row.names(actual5000)))
+actual5000$win_size <-5000
+colnames(actual5000) = c("omega_value","bp_position","win_size")
+actual7500 <- read.table("OmegaPlus_Report.7500_actual")
+actual7500$bp_pos <- floor(as.numeric(row.names(actual7500)))
+actual7500$win_size <-7500
+colnames(actual7500) = c("omega_value","bp_position","win_size")
+actual10000 <- read.table("OmegaPlus_Report.10000_actual")
+actual10000$bp_pos <- floor(as.numeric(row.names(actual10000)))
+actual10000$win_size <-10000
+colnames(actual10000) = c("omega_value","bp_position","win_size")
+op_actual <- rbind(actual150,actual300,actual500,actual750,actual1000,actual1500,actual3000,actual5000,actual7500,actual10000)
+```
+
+```{r}
+op_actual %>% filter(omega_value > 0.0 )%>% ggplot(aes(x=omega_value))+
+  geom_histogram(binwidth = 1) +
+  facet_wrap(~win_size,ncol = 2)
+
+op_actual %>% filter(omega_value > 0.0 )%>% ggplot(aes(x=omega_value))+
+  geom_histogram(binwidth = 1) +
+  xlim(c(0,100)) +
+  facet_wrap(~win_size,ncol = 2)
+```
+
+```{r}
+# Which parameter had the most significant hits
+w_size = c()
+n_pass = c()
+for(i in 1:length(unique(op_null$win_size))){
+    # 1. fit the null model to a poisson distribution 
+  subset_op <- subset(op_null,win_size==unique(op_null$win_size)[i] & omega_value > 0.0)
+    
+  params <- fitdistr(subset_op$omega_value,"gamma")
+
+# 2. establish a significance threshold (bonferroni corrected)
+subset_op <- subset(op_actual,win_size==unique(op_actual$win_size)[i] & omega_value > 0.0)
+num_obs <- nrow(subset_op)
+sig_level <- 0.05/num_obs
+
+subset_op$pass <- ifelse(1-pgamma(subset_op$omega_value,params$estimate["shape"],params$estimate["rate"]) < sig_level,1,0)
+#head(subset_snp_count$pass)
+num_pass <- sum(subset_op$pass)
+print(num_pass)
+w_size <- append(w_size,unique(op_actual$win_size)[i])
+n_pass <- append(n_pass,num_pass)
+
+} 
+
+
+# let's make the dataframe 
+num_sig_data <- data.frame(w_size,n_pass)
+```
+
+```{r}
+num_sig_data$pass_per_window = num_sig_data$n_pass/num_sig_data$w_size
+num_sig_data %>% ggplot(aes(x=as.factor(w_size),y=pass_per_window)) + 
+  geom_col(fill = "steelblue") + 
+  xlab("Window size (bps)") +
+  ylab("Significant results per window size") +
+   theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         axis.title.y = element_text(size = 15),
+         axis.title.x = element_text(size = 15),
+         axis.line = element_line(),
+        panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13))
+```
+
+```{r}
+op_5000_null <- subset(op_null,win_size==5000 & omega_value > 0)
+params <- fitdist(op_5000_null$omega_value,"gamma")
+
+op_5000 <- subset(op_actual,win_size==5000 & omega_value > 0)
+# 2. establish a significance threshold (bonferroni corrected)
+num_obs <- nrow(op_5000)
+sig_level <- 0.05/num_obs
+
+op_5000$pass <- ifelse(1-pgamma(op_5000$omega_value,params$estimate["shape"],params$estimate["rate"]) < sig_level,1,0)
+
+op_5000$chr <- "LT708304.1"
+op_5000$start <- op_5000$bp_position - 5000
+op_5000$end <- op_5000$bp_position + 5000
+
+op_out <- op_5000 %>% dplyr::filter(pass == 1) %>% dplyr::select(chr,start,end)
+
+```
+
+## Overlapping genes of SNP Dense regions 
+```{r}
+overlap_genes <- read.csv("/Users/noahaus/overlap_genes.csv")
+overlap_genes$strand_bool <- ifelse(overlap_genes$strand == '+',TRUE,FALSE)
+overlap_genes$middle <- (overlap_genes$start + overlap_genes$end)/2
+overlap_genes[grepl(pattern = "BQ2027",overlap_genes$gene_name),]$gene_name <- ""
+# Test if it worked!
+ggplot(overlap_genes %>% filter(region == "SDR10"), aes(xmin = start, xmax = end, y = chr , fill = gene_name,forward = strand_bool)) +
+     geom_gene_arrow() +
+     #facet_wrap(~ facet_genes, scales = "free", ncol = 2) +
+     scale_fill_brewer(palette = "Set2") + 
+     theme_genes()
+```
+
+## Genes - Across Scales shared regions 
+```{r}
+country_regions <- var_imp[var_imp$class == "country",]$region
+fastbaps_regions <- var_imp[var_imp$class == "fastbaps",]$region
+species_regions <- var_imp[var_imp$class == "species",]$region
+
+core <- intersect(intersect(fastbaps_regions,species_regions),country_regions)
+core <- gsub("SDsnp","SDR",gsub("SSsnp","SSR",core))
+
+country_uniq <- setdiff(country_regions,union(species_regions,fastbaps_regions))
+species_uniq <- setdiff(species_regions,union(country_regions,fastbaps_regions))
+fastbaps_uniq <- setdiff(fastbaps_regions,union(country_regions,species_regions))
+gsub("SDsnp","SDR",gsub("SSsnp","SSR",country_uniq))
+country_uniq <- gsub("SDsnp","SDR",gsub("SSsnp","SSR",country_uniq))
+species_uniq <- gsub("SDsnp","SDR",gsub("SSsnp","SSR",species_uniq))
+fastbaps_uniq <- gsub("SDsnp","SDR",gsub("SSsnp","SSR",fastbaps_uniq))
+
+across_scale_shared <- overlap_genes %>% filter(region %in% core)
+```
+
+```{r}
+country_genes <- ggplot(overlap_genes %>% filter(region %in% country_uniq), aes(xmin = start, xmax = end, x = middle,y = region , label = gene_name,forward = strand_bool)) +
+  geom_gene_arrow(arrow_body_height = grid::unit(15, "mm"),                    arrowhead_height = grid::unit(20, "mm")) +
+      geom_text(angle = 45, nudge_y = 0.25,  size = 5) +
+     facet_wrap(~ region, scales = "free", nrow = 2) +
+     theme_genes() +
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Genomic Region ID",
+       x = "Mycobacterium bovis genome") +
+  ggtitle("Country of Origin") 
+
+cluster_genes <- ggplot(overlap_genes %>% filter(region %in% fastbaps_uniq), aes(xmin = start, xmax = end, x = middle,y = region , label = gene_name,forward = strand_bool)) +
+  geom_gene_arrow(arrow_body_height = grid::unit(15, "mm"),                    arrowhead_height = grid::unit(20, "mm")) +
+      geom_text(angle = 45, nudge_y = 0.25,  size = 5) +
+     facet_wrap(~ region, scales = "free", nrow = 2) +
+     theme_genes() +
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Genomic Region ID",
+       x = "Mycobacterium bovis genome") +
+  ggtitle("Population Cluster") 
+
+species_genes <- ggplot(overlap_genes %>% filter(region %in% species_uniq), aes(xmin = start, xmax = end, x = middle,y = region , label = gene_name,forward = strand_bool)) +
+  geom_gene_arrow(arrow_body_height = grid::unit(15, "mm"),                    arrowhead_height = grid::unit(20, "mm")) +
+      geom_text(angle = 45, nudge_y = 0.25,  size = 5) +
+     facet_wrap(~ region, scales = "free", nrow = 2) +
+     theme_genes() +
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Genomic Region ID",
+       x = "Mycobacterium bovis genome") +
+  ggtitle("Species") 
+
+gridExtra::grid.arrange(country_genes,cluster_genes,species_genes, nrow = 1)
+
+```
+
+```{r}
+across_scale_regions <- c("SDsnp10","SSsnp6","SSsnp11","SSsnp42","SSsnp53","SSsnp71","SSsnp28")
+across_scale_regions <- gsub("SDsnp","SDR",gsub("SSsnp","SSR",across_scale_regions))
+
+```
+
+## Genes - Aggregated vs. Stratified
+```{r}
+cattle_regions <- cattle_var_imp[cattle_var_imp$class == "cattle",]$feature
+cattle_geo_regions <- cattle_var_imp[cattle_var_imp$class == "cattle_geo",]$feature
+
+cattle_shared <- intersect(cattle_regions,cattle_geo_regions)
+cattle_uniq <- setdiff(cattle_regions,cattle_shared)
+cattle_geo_uniq <- setdiff(cattle_geo_regions,cattle_shared)
+
+cattle_uniq <- gsub("SDsnp","SDR",gsub("SSsnp","SSR",cattle_uniq))
+cattle_geo_uniq <- gsub("SDsnp","SDR",gsub("SSsnp","SSR",cattle_geo_uniq))
+
+agg_genes <- ggplot(overlap_genes %>% filter(region %in% cattle_uniq), aes(xmin = start, xmax = end, x = middle,y = region , label = gene_name,forward = strand_bool)) +
+  geom_gene_arrow(arrow_body_height = grid::unit(15, "mm"),                    arrowhead_height = grid::unit(20, "mm")) +
+      geom_text(angle = 45, nudge_y = 0.25,  size = 5) +
+     facet_wrap(~ region, scales = "free", nrow = 2) +
+     theme_genes() +
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Genomic Region ID",
+       x = "Mycobacterium bovis genome") +
+  ggtitle("Aggregated Cattle") 
+
+strat_genes <- ggplot(overlap_genes %>% filter(region %in% cattle_geo_uniq), aes(xmin = start, xmax = end, x = middle,y = region , label = gene_name,forward = strand_bool)) +
+  geom_gene_arrow(arrow_body_height = grid::unit(15, "mm"),                    arrowhead_height = grid::unit(20, "mm")) +
+      geom_text(angle = 45, nudge_y = 0.25,  size = 5) +
+     facet_wrap(~ region, scales = "free", nrow = 2) +
+     theme_genes() +
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Genomic Region ID",
+       x = "Mycobacterium bovis genome") +
+  ggtitle("Stratified Cattle") 
+
+gridExtra::grid.arrange(agg_genes,strat_genes,nrow = 1)
+```
+
+```{r}
+cattle_importance_regions <- cattle_var_imp_wide$feature
+cattle_importance_regions <- gsub("SDsnp","SDR",gsub("SSsnp","SSR",cattle_importance_regions))
+
+#Better to make this a table. 
+
+ggplot(overlap_genes %>% filter(region %in% cattle_importance_regions), aes(xmin = start, xmax = end, x = middle,y = region , label = gene_name,forward = strand_bool)) +
+  geom_gene_arrow(arrow_body_height = grid::unit(15, "mm"),                    arrowhead_height = grid::unit(20, "mm")) +
+      geom_text(angle = 45, nudge_y = 0.25,  size = 5) +
+     facet_wrap(~ region, scales = "free", nrow = 2) +
+     theme_genes() +
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Genomic Region ID",
+       x = "Mycobacterium bovis genome") +
+  ggtitle("Aggregated to Stratified") 
+
+```
+
+## Genes - Reservoir 
+```{r}
+ggplot(overlap_genes %>% filter(region == "SDR10"), aes(xmin = start, xmax = end, x = middle,y = region , label = gene_name,forward = strand_bool)) +
+  geom_gene_arrow(arrow_body_height = grid::unit(15, "mm"),                    arrowhead_height = grid::unit(20, "mm")) +
+      geom_text(angle = 45, nudge_y = 0.25,  size = 5) +
+     facet_wrap(~ region, scales = "free", nrow = 2) +
+     theme_genes() +
+  theme(axis.text.x = element_text(size = 13, angle = 45, hjust = 1),
+         axis.text.y = element_text(size = 13, angle = 45, hjust = 1),
+         plot.title = element_text(size = 20),
+         axis.title.x = element_text(size = 15),
+         axis.title.y = element_text(size = 15),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.text = element_text(size = 13),
+        legend.title = element_text(size = 13),
+        legend.position = "none") + 
+  labs(y = "Genomic Region ID",
+       x = "Mycobacterium bovis genome") +
+  ggtitle("UK reservoir versus non-target host") 
+```
